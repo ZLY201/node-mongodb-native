@@ -27,6 +27,10 @@ jobs:
         run: |
           npm ci
           sudo apt-get install hugo
+      - name: Start MongoDB
+        uses: supercharge/mongodb-github-action@1.8.0
+        with:
+          mongodb-port: 27019
       - name: Build Docs
         run: npm run build:ts
       - name: Test
