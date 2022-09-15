@@ -1,4 +1,4 @@
-import Denque = require('denque');
+import { Deque } from 'js-sdsl';
 import { clearTimeout, setTimeout } from 'timers';
 
 import type { ObjectId } from '../bson';
@@ -125,7 +125,7 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
   /** @internal */
   [kLogger]: Logger;
   /** @internal */
-  [kConnections]: Denque<Connection>;
+  [kConnections]: Deque<Connection>;
   /** @internal */
   [kPending]: number;
   /** @internal */
@@ -146,7 +146,7 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
   /** @internal */
   [kCancellationToken]: CancellationToken;
   /** @internal */
-  [kWaitQueue]: Denque<WaitQueueMember>;
+  [kWaitQueue]: Deque<WaitQueueMember>;
   /** @internal */
   [kMetrics]: ConnectionPoolMetrics;
   /** @internal */
@@ -227,7 +227,7 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
 
     this[kPoolState] = PoolState.paused;
     this[kLogger] = new Logger('ConnectionPool');
-    this[kConnections] = new Denque();
+    this[kConnections] = new Deque();
     this[kPending] = 0;
     this[kCheckedOut] = 0;
     this[kMinPoolSizeTimer] = undefined;
@@ -236,7 +236,7 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
     this[kConnectionCounter] = makeCounter(1);
     this[kCancellationToken] = new CancellationToken();
     this[kCancellationToken].setMaxListeners(Infinity);
-    this[kWaitQueue] = new Denque();
+    this[kWaitQueue] = new Deque();
     this[kMetrics] = new ConnectionPoolMetrics();
     this[kProcessingWaitQueue] = false;
 
@@ -274,7 +274,7 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
 
   /** An integer expressing how many connections are currently available in the pool. */
   get availableConnectionCount(): number {
-    return this[kConnections].length;
+    return this[kConnections].size();
   }
 
   get pendingConnectionCount(): number {
@@ -286,7 +286,7 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
   }
 
   get waitQueueSize(): number {
-    return this[kWaitQueue].length;
+    return this[kWaitQueue].size();
   }
 
   get loadBalanced(): boolean {
@@ -353,7 +353,7 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
       }, waitQueueTimeoutMS);
     }
 
-    this[kWaitQueue].push(waitQueueMember);
+    this[kWaitQueue].pushBack(waitQueueMember);
     process.nextTick(() => this.processWaitQueue());
   }
 
@@ -369,7 +369,7 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
 
     if (!willDestroy) {
       connection.markAvailable();
-      this[kConnections].unshift(connection);
+      this[kConnections].pushFront(connection);
     }
 
     this[kCheckedOut]--;
@@ -432,7 +432,8 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
 
     // drain the wait queue
     while (this.waitQueueSize) {
-      const waitQueueMember = this[kWaitQueue].pop();
+      const waitQueueMember = this[kWaitQueue].back();
+      this[kWaitQueue].popBack();
       if (waitQueueMember) {
         if (waitQueueMember.timer) {
           clearTimeout(waitQueueMember.timer);
@@ -457,8 +458,10 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
 
     // mark the pool as closed immediately
     this[kPoolState] = PoolState.closed;
+    const arr: Connection[] = [];
+    this[kConnections].forEach(val => arr.push(val));
     eachAsync<Connection>(
-      this[kConnections].toArray(),
+      arr,
       (conn, cb) => {
         this.emit(
           ConnectionPool.CONNECTION_CLOSED,
@@ -637,7 +640,7 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
       this.createConnection((err, connection) => {
         this[kPending]--;
         if (!err && connection) {
-          this[kConnections].push(connection);
+          this[kConnections].pushBack(connection);
           process.nextTick(() => this.processWaitQueue());
         }
         this[kMinPoolSizeTimer] = setTimeout(() => this.ensureMinPoolSize(), 10);
@@ -655,14 +658,14 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
     this[kProcessingWaitQueue] = true;
 
     while (this.waitQueueSize) {
-      const waitQueueMember = this[kWaitQueue].peekFront();
+      const waitQueueMember = this[kWaitQueue].front();
       if (!waitQueueMember) {
-        this[kWaitQueue].shift();
+        this[kWaitQueue].popFront();
         continue;
       }
 
       if (waitQueueMember[kCancelled]) {
-        this[kWaitQueue].shift();
+        this[kWaitQueue].popFront();
         continue;
       }
 
@@ -670,7 +673,8 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
         break;
       }
 
-      const connection = this[kConnections].shift();
+      const connection = this[kConnections].front();
+      this[kConnections].popFront();
       if (!connection) {
         break;
       }
@@ -685,7 +689,7 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
           clearTimeout(waitQueueMember.timer);
         }
 
-        this[kWaitQueue].shift();
+        this[kWaitQueue].popFront();
         waitQueueMember.callback(undefined, connection);
       }
     }
@@ -696,7 +700,8 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
       this.pendingConnectionCount < maxConnecting &&
       (maxPoolSize === 0 || this.totalConnectionCount < maxPoolSize)
     ) {
-      const waitQueueMember = this[kWaitQueue].shift();
+      const waitQueueMember = this[kWaitQueue].front();
+      this[kWaitQueue].popFront();
       if (!waitQueueMember || waitQueueMember[kCancelled]) {
         continue;
       }
@@ -704,7 +709,7 @@ export class ConnectionPool extends TypedEventEmitter<ConnectionPoolEvents> {
         this[kPending]--;
         if (waitQueueMember[kCancelled]) {
           if (!err && connection) {
-            this[kConnections].push(connection);
+            this[kConnections].pushBack(connection);
           }
         } else {
           if (err) {
