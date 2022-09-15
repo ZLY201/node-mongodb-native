@@ -30,10 +30,10 @@ jobs:
       - name: Start MongoDB
         uses: supercharge/mongodb-github-action@1.8.0
         with:
-          mongodb-port: 27019
+          mongodb-port: 27017
       - name: Build Docs
         run: npm run build:ts
       - name: Test
-        run: npm run test
+        run: npm run check:test
       - name: Benchmark
         run: npm run check:bench
