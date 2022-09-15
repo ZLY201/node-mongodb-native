@@ -33,7 +33,5 @@ jobs:
           mongodb-port: 27017
       - name: Build Docs
         run: npm run build:ts
-      - name: Test
-        run: npm run check:test
       - name: Benchmark
         run: npm run check:bench
