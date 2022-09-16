@@ -34,4 +34,6 @@ jobs:
       - name: Build
         run: npm run build:ts
       - name: Check
-        run: AUTH='noauth' npm run check:test
+        run: |
+          AUTH='noauth' ./test/tools/cluster_setup.sh server
+          AUTH='noauth' npm test
