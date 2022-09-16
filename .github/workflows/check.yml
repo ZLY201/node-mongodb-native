@@ -1,0 +1,37 @@
+name: Test
+
+on: ['push']
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build:
+
+    # prevent subsequent commits from triggering the job multiple times
+    concurrency:
+      group: ci-${{ github.ref }}
+      cancel-in-progress: true
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Setup NodeJS
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16.x
+          cache: 'npm'
+      - name: Install Dependencies
+        run: |
+          npm ci
+          sudo apt-get install hugo
+      - name: Start MongoDB
+        uses: supercharge/mongodb-github-action@1.8.0
+        with:
+          mongodb-port: 27017
+      - name: Build
+        run: npm run build:ts
+      - name: Check
+        run: AUTH='noauth' npm run check:test
