@@ -1,7 +1,5 @@
 'use strict';
 
-const util = require('./util');
-
 class Benchmark {
   constructor() {
     // The Task itself
@@ -16,6 +14,7 @@ class Benchmark {
     // Meta information
     this._taskSize = null;
     this._description = null;
+    this._taskType = 'async';
   }
 
   /**
@@ -99,6 +98,23 @@ class Benchmark {
   }
 
   /**
+   * Sets the task type - either a synchronous or asynchronous task.  The default is async.
+   *
+   * @param {'async' | 'sync'} type - the type of task
+   */
+  taskType(type) {
+    if (['async', 'sync'].includes(type)) {
+      this._taskType = type;
+    } else {
+      throw new Error(
+        `Invalid value for benchmark field _taskType: expected either 'async' or 'sync', but received ${type}`
+      );
+    }
+
+    return this;
+  }
+
+  /**
    * Set the Description
    *
    * @param {string} description The description of the benchmark
@@ -124,11 +140,11 @@ class Benchmark {
    * @throws Error
    */
   validate() {
-    ['_task', '_taskSize'].forEach(key => {
+    for (const key of ['_task', '_taskSize', '_taskType']) {
       if (!this[key]) {
         throw new Error(`Benchmark is missing required field ${key}`);
       }
-    });
+    }
   }
 
   toObj() {
@@ -165,10 +181,24 @@ class Benchmark {
   }
 
   /**
+   * Converts an array of task functions into a single async function, that awaits each
+   * task function and resolves once all are completed.
+   *
+   * The returned function will reject if any of the task functions fails.
+   *
    * @param {any} arr
+   * @return {() => Promise<void>}
    */
   _convertArrayToAsyncPipeFn(arr) {
-    return arr.length ? util.asyncChain(arr) : util.noop;
+    const array = arr.length ? arr : [];
+    return async function () {
+      // copy the array to guard against modification
+      const chain = [].concat(array);
+      const context = this;
+      for (const fn of chain) {
+        await fn.call(context);
+      }
+    };
   }
 }
 

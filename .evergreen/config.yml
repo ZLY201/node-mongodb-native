@@ -584,6 +584,9 @@ functions:
         working_dir: src
         script: |
           ${PREPARE_SHELL}
+          # Write an empty prepare_mongodb_aws so no auth environment variables
+          # are set.
+          echo "" > "${PROJECT_DIRECTORY}/prepare_mongodb_aws.sh"
           cd ${DRIVERS_TOOLS}/.evergreen/auth_aws
           . ./activate_venv.sh
           ${MONGODB_BINARIES}/mongo aws_e2e_ec2.js
@@ -781,6 +784,38 @@ functions:
         binary: bash
         args:
           - ${PROJECT_DIRECTORY}/.evergreen/run-snappy-version-test.sh
+  run lambda handler example tests:
+    - command: subprocess.exec
+      params:
+        working_dir: src
+        timeout_secs: 60
+        env:
+          MONGODB_URI: ${MONGODB_URI}
+          PROJECT_DIRECTORY: ${PROJECT_DIRECTORY}
+        binary: bash
+        args:
+          - ${PROJECT_DIRECTORY}/.evergreen/run-lambda-tests.sh
+  run lambda handler example tests with aws auth:
+    - command: shell.exec
+      type: test
+      params:
+        working_dir: src
+        silent: true
+        script: |
+          cd ${DRIVERS_TOOLS}/.evergreen/auth_aws
+          ${MONGODB_BINARIES}/mongo --verbose aws_e2e_regular_aws.js
+          cd -
+          cat <<EOF > "${PROJECT_DIRECTORY}/prepare_mongodb_aws.sh"
+            export AWS_ACCESS_KEY_ID=${iam_auth_ecs_account}
+            export AWS_SECRET_ACCESS_KEY=${iam_auth_ecs_secret_access_key}
+          EOF
+    - command: shell.exec
+      type: test
+      params:
+        working_dir: src
+        script: |
+          ${PREPARE_SHELL}
+          ${PROJECT_DIRECTORY}/.evergreen/run-lambda-aws-tests.sh
   run bson-ext test:
     - command: subprocess.exec
       type: test
@@ -834,12 +869,41 @@ functions:
           npx nyc report -t merged-coverage --reporter=html --report-dir output
 
           aws s3 cp output/lcov-report s3://mciuploads/mongo-node-driver/${revision}/${version_id}//lcov-report/
+  run spec driver benchmarks:
+    - command: subprocess.exec
+      type: test
+      params:
+        working_dir: src
+        env:
+          PROJECT_DIRECTORY: ${PROJECT_DIRECTORY}
+          MONGODB_URI: ${MONGODB_URI}
+        binary: bash
+        args:
+          - ${PROJECT_DIRECTORY}/.evergreen/run-benchmarks.sh
 tasks:
   - name: test-serverless
     tags:
       - serverless
     commands:
       - func: run serverless tests
+  - name: run-spec-benchmark-tests
+    tags:
+      - run-spec-benchmark-tests
+      - performance
+    exec_timeout_secs: 3600
+    commands:
+      - func: install dependencies
+        vars:
+          NODE_LTS_NAME: gallium
+      - func: bootstrap mongo-orchestration
+        vars:
+          VERSION: rapid
+          TOPOLOGY: server
+          AUTH: noauth
+      - func: run spec driver benchmarks
+      - command: perf.send
+        params:
+          file: src/results.json
   - name: test-latest-server
     tags:
       - latest
@@ -1681,7 +1745,7 @@ tasks:
     commands:
       - func: install dependencies
         vars:
-          NODE_LTS_NAME: fermium
+          NODE_LTS_NAME: gallium
       - func: run mongosh integration tests
   - name: run-custom-snappy-tests
     tags:
@@ -2157,6 +2221,32 @@ tasks:
           AUTH: noauth
       - func: bootstrap kms servers
       - func: run tests
+  - name: test-lambda-example
+    tags:
+      - latest
+      - lambda
+    commands:
+      - func: install dependencies
+      - func: bootstrap mongo-orchestration
+        vars:
+          VERSION: rapid
+          TOPOLOGY: server
+      - func: run lambda handler example tests
+  - name: test-lambda-aws-auth-example
+    tags:
+      - latest
+      - lambda
+    commands:
+      - func: install dependencies
+      - func: bootstrap mongo-orchestration
+        vars:
+          VERSION: rapid
+          AUTH: auth
+          ORCHESTRATION_FILE: auth-aws.json
+          TOPOLOGY: server
+      - func: add aws auth variables to file
+      - func: setup aws env
+      - func: run lambda handler example tests with aws auth
 task_groups:
   - name: serverless_task_group
     setup_group_can_fail_task: true
@@ -2205,16 +2295,24 @@ post:
 ignore:
   - '*.md'
 buildvariants:
+  - name: performance-tests
+    display_name: Performance Test
+    run_on: ubuntu1804-large
+    tasks:
+      - run-spec-benchmark-tests
   - name: ubuntu-18.04-erbium
     display_name: Ubuntu 18.04 Node Erbium
     run_on: ubuntu1804-large
     expansions:
       NODE_LTS_NAME: erbium
       CLIENT_ENCRYPTION: true
-    tasks: &ref_0
+    tasks:
       - test-latest-server
       - test-latest-replica_set
       - test-latest-sharded_cluster
+      - test-rapid-server
+      - test-rapid-replica_set
+      - test-rapid-sharded_cluster
       - test-6.0-server
       - test-6.0-replica_set
       - test-6.0-sharded_cluster
@@ -2256,7 +2354,48 @@ buildvariants:
     expansions:
       NODE_LTS_NAME: fermium
       CLIENT_ENCRYPTION: true
-    tasks: *ref_0
+    tasks:
+      - test-latest-server
+      - test-latest-replica_set
+      - test-latest-sharded_cluster
+      - test-rapid-server
+      - test-rapid-replica_set
+      - test-rapid-sharded_cluster
+      - test-6.0-server
+      - test-6.0-replica_set
+      - test-6.0-sharded_cluster
+      - test-5.0-server
+      - test-5.0-replica_set
+      - test-5.0-sharded_cluster
+      - test-4.4-server
+      - test-4.4-replica_set
+      - test-4.4-sharded_cluster
+      - test-4.2-server
+      - test-4.2-replica_set
+      - test-4.2-sharded_cluster
+      - test-4.0-server
+      - test-4.0-replica_set
+      - test-4.0-sharded_cluster
+      - test-3.6-server
+      - test-3.6-replica_set
+      - test-3.6-sharded_cluster
+      - test-latest-server-v1-api
+      - test-atlas-connectivity
+      - test-atlas-data-lake
+      - test-5.0-load-balanced
+      - test-6.0-load-balanced
+      - test-latest-load-balanced
+      - test-auth-kerberos
+      - test-auth-ldap
+      - test-socks5
+      - test-socks5-tls
+      - test-zstd-compression
+      - test-snappy-compression
+      - test-tls-support-latest
+      - test-tls-support-6.0
+      - test-tls-support-5.0
+      - test-tls-support-4.4
+      - test-tls-support-4.2
   - name: ubuntu-18.04-gallium
     display_name: Ubuntu 18.04 Node Gallium
     run_on: ubuntu1804-large
@@ -2267,6 +2406,9 @@ buildvariants:
       - test-latest-server
       - test-latest-replica_set
       - test-latest-sharded_cluster
+      - test-rapid-server
+      - test-rapid-replica_set
+      - test-rapid-sharded_cluster
       - test-6.0-server
       - test-6.0-replica_set
       - test-6.0-sharded_cluster
@@ -2306,10 +2448,13 @@ buildvariants:
     expansions:
       NODE_LTS_NAME: erbium
       MSVS_VERSION: 2019
-    tasks: &ref_1
+    tasks:
       - test-latest-server
       - test-latest-replica_set
       - test-latest-sharded_cluster
+      - test-rapid-server
+      - test-rapid-replica_set
+      - test-rapid-sharded_cluster
       - test-6.0-server
       - test-6.0-replica_set
       - test-6.0-sharded_cluster
@@ -2345,7 +2490,42 @@ buildvariants:
     expansions:
       NODE_LTS_NAME: fermium
       MSVS_VERSION: 2019
-    tasks: *ref_1
+    tasks:
+      - test-latest-server
+      - test-latest-replica_set
+      - test-latest-sharded_cluster
+      - test-rapid-server
+      - test-rapid-replica_set
+      - test-rapid-sharded_cluster
+      - test-6.0-server
+      - test-6.0-replica_set
+      - test-6.0-sharded_cluster
+      - test-5.0-server
+      - test-5.0-replica_set
+      - test-5.0-sharded_cluster
+      - test-4.4-server
+      - test-4.4-replica_set
+      - test-4.4-sharded_cluster
+      - test-4.2-server
+      - test-4.2-replica_set
+      - test-4.2-sharded_cluster
+      - test-4.0-server
+      - test-4.0-replica_set
+      - test-4.0-sharded_cluster
+      - test-3.6-server
+      - test-3.6-replica_set
+      - test-3.6-sharded_cluster
+      - test-latest-server-v1-api
+      - test-atlas-data-lake
+      - test-socks5
+      - test-socks5-tls
+      - test-zstd-compression
+      - test-snappy-compression
+      - test-tls-support-latest
+      - test-tls-support-6.0
+      - test-tls-support-5.0
+      - test-tls-support-4.4
+      - test-tls-support-4.2
   - name: windows-64-vs2019-gallium
     display_name: Windows (VS2019) Node Gallium
     run_on: windows-64-vs2019-large
@@ -2356,6 +2536,9 @@ buildvariants:
       - test-latest-server
       - test-latest-replica_set
       - test-latest-sharded_cluster
+      - test-rapid-server
+      - test-rapid-replica_set
+      - test-rapid-sharded_cluster
       - test-6.0-server
       - test-6.0-replica_set
       - test-6.0-sharded_cluster
@@ -2485,3 +2668,9 @@ buildvariants:
       - test-3.6-server-noauth
       - test-3.6-replica_set-noauth
       - test-3.6-sharded_cluster-noauth
+  - name: ubuntu1804-test-lambda
+    display_name: AWS Lambda handler tests
+    run_on: ubuntu1804-test
+    tasks:
+      - test-lambda-example
+      - test-lambda-aws-auth-example
