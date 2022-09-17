@@ -26,6 +26,8 @@ import {
 import {
   MongoCompatibilityError,
   MongoDriverError,
+  MongoError,
+  MongoErrorLabel,
   MongoRuntimeError,
   MongoServerSelectionError,
   MongoTopologyClosedError
@@ -814,6 +816,21 @@ function updateServers(topology: Topology, incomingServerDescription?: ServerDes
     const server = topology.s.servers.get(incomingServerDescription.address);
     if (server) {
       server.s.description = incomingServerDescription;
+      if (
+        incomingServerDescription.error instanceof MongoError &&
+        incomingServerDescription.error.hasErrorLabel(MongoErrorLabel.ResetPool)
+      ) {
+        server.s.pool.clear();
+      } else if (incomingServerDescription.error == null) {
+        const newTopologyType = topology.s.description.type;
+        const shouldMarkPoolReady =
+          incomingServerDescription.isDataBearing ||
+          (incomingServerDescription.type !== ServerType.Unknown &&
+            newTopologyType === TopologyType.Single);
+        if (shouldMarkPoolReady) {
+          server.s.pool.ready();
+        }
+      }
     }
   }
 
@@ -904,9 +921,7 @@ function processWaitQueue(topology: Topology) {
     } else if (selectedDescriptions.length === 1) {
       selectedServer = topology.s.servers.get(selectedDescriptions[0].address);
     } else {
-      // don't shuffle the array if there are only two elements
-      const descriptions =
-        selectedDescriptions.length === 2 ? selectedDescriptions : shuffle(selectedDescriptions, 2);
+      const descriptions = shuffle(selectedDescriptions, 2);
       const server1 = topology.s.servers.get(descriptions[0].address);
       const server2 = topology.s.servers.get(descriptions[1].address);
 

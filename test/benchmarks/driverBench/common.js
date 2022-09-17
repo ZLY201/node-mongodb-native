@@ -2,15 +2,18 @@
 
 const fs = require('fs');
 const path = require('path');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 const { MongoClient } = require('../../..');
 const { GridFSBucket } = require('../../..');
+
+// eslint-disable-next-line no-restricted-modules
+const { MONGODB_ERROR_CODES } = require('../../../lib/error');
 
 const DB_NAME = 'perftest';
 const COLLECTION_NAME = 'corpus';
 
 const SPEC_DIRECTORY = path.resolve(__dirname, 'spec');
-
-const MONGODB_URL = process.env.MONGODB_URL || 'mongodb://localhost:27017';
 
 function loadSpecFile(filePath, encoding) {
   const fp = [SPEC_DIRECTORY].concat(filePath);
@@ -22,7 +25,7 @@ function loadSpecString(filePath) {
 }
 
 function makeClient() {
-  this.client = new MongoClient(MONGODB_URL);
+  this.client = new MongoClient(process.env.MONGODB_URI || 'mongodb://localhost:27017');
 }
 
 function connectClient() {
@@ -50,7 +53,11 @@ function initCollection() {
 }
 
 function dropCollection() {
-  return this.collection.drop();
+  return this.collection.drop().catch(e => {
+    if (e.code !== MONGODB_ERROR_CODES.NamespaceNotFound) {
+      throw e;
+    }
+  });
 }
 
 function initBucket() {
@@ -67,6 +74,33 @@ function makeLoadJSON(name) {
   };
 }
 
+function makeLoadTweets(makeId) {
+  return function () {
+    const doc = this.doc;
+    const tweets = [];
+    for (let _id = 1; _id <= 10000; _id += 1) {
+      tweets.push(Object.assign({}, doc, makeId ? { _id } : {}));
+    }
+
+    return this.collection.insertMany(tweets);
+  };
+}
+
+function makeLoadInsertDocs(numberOfOperations) {
+  return function () {
+    this.docs = [];
+    for (let i = 0; i < numberOfOperations; i += 1) {
+      this.docs.push(Object.assign({}, this.doc));
+    }
+  };
+}
+
+async function writeSingleByteFileToBucket() {
+  const stream = this.bucket.openUploadStream('setup-file.txt');
+  const oneByteFile = Readable.from('a');
+  return pipeline(oneByteFile, stream);
+}
+
 module.exports = {
   makeClient,
   connectClient,
@@ -80,5 +114,8 @@ module.exports = {
   loadSpecFile,
   loadSpecString,
   initBucket,
-  dropBucket
+  dropBucket,
+  makeLoadTweets,
+  makeLoadInsertDocs,
+  writeSingleByteFileToBucket
 };
